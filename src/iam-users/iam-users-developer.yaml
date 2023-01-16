@@ -1,0 +1,211 @@
+# StackName: iam-users-developer
+AWSTemplateFormatVersion: 2010-09-09
+
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        - I3042
+
+Description: >
+  Iam Users (Developer).
+
+Parameters:
+  InitialPassword:
+    Type: String
+    Description: 'IAM User Initial Password'
+    Default: ''
+    NoEcho: true
+
+Resources:
+  IamGroup:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: 'developers'
+
+  IamUserPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: 'IamUserPolicy'
+      Groups:
+        - !Ref IamGroup
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: 'AllowGetAccountPasswordPolicy'
+            Effect: 'Allow'
+            Action:
+              - 'iam:GetAccountPasswordPolicy'
+            Resource:
+              - '*'
+          - Sid: 'AllowChangeOwnPassword'
+            Effect: 'Allow'
+            Action:
+              - 'iam:ChangePassword'
+            Resource:
+              - !Sub 'arn:aws:iam::${AWS::AccountId}:user/${!aws:username}'
+          - Sid: 'AllowListActions'
+            Effect: 'Allow'
+            Action:
+              - 'iam:ListUsers'
+              - 'iam:ListVirtualMFADevices'
+            Resource:
+              - '*'
+          - Sid: 'AllowIndividualUserToManageTheirOwnMFA'
+            Effect: 'Allow'
+            Action:
+              - 'iam:CreateVirtualMFADevice'
+              - 'iam:DeleteVirtualMFADevice'
+              - 'iam:ListMFADevices'
+              - 'iam:EnableMFADevice'
+              - 'iam:ResyncMFADevice'
+            Resource:
+              - 'arn:aws:iam::*:mfa/${aws:username}'
+              - 'arn:aws:iam::*:user/${aws:username}'
+          - Sid: 'AllowIndividualUserToDeactivateOnlyTheirOwnMFAOnlyWhenUsingMFA'
+            Effect: 'Allow'
+            Action:
+              - 'iam:DeactivateMFADevice'
+            Resource:
+              - 'arn:aws:iam::*:mfa/${aws:username}'
+              - 'arn:aws:iam::*:user/${aws:username}'
+            Condition:
+              Bool:
+                'aws:MultiFactorAuthPresent': 'true'
+          - Sid: 'BlockMostAccessUnlessSignedInWithMFA'
+            Effect: 'Deny'
+            NotAction:
+              - 'iam:GetAccountPasswordPolicy'
+              - 'iam:ChangePassword'
+              - 'iam:ListUsers'
+              - 'iam:ListVirtualMFADevices'
+              - 'iam:CreateVirtualMFADevice'
+              - 'iam:DeleteVirtualMFADevice'
+              - 'iam:ListMFADevices'
+              - 'iam:EnableMFADevice'
+              - 'iam:ResyncMFADevice'
+            Resource:
+              - '*'
+            Condition:
+              BoolIfExists:
+                'aws:MultiFactorAuthPresent': 'false'
+
+  IamPolicyDenyIamDeveloperCloudformationView:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: 'DenyIamDeveloperCloudformationViewPolicy'
+      Roles:
+        - !Ref IamAssumeRoleDeveloper
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: 'DenyIamDeveloperCloudformationView'
+            Effect: 'Deny'
+            Action:
+              - 'cloudformation:*'
+            Resource:
+              - !Sub '${AWS::StackId}'
+
+  # IAM Users ------------------------------------------
+  ## administrator
+  IamUserAdministrator:
+    Type: AWS::IAM::User
+    Properties:
+      Groups:
+        - !Ref IamGroup
+      UserName: 'administrator'
+      LoginProfile:
+        Password: !Ref InitialPassword
+        PasswordResetRequired: true
+
+  IamUserAdministratorAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      Serial: 1
+      Status: 'Active'
+      UserName: !Ref IamUserAdministrator
+
+  ## developer
+  IamUserDeveloper:
+    Type: AWS::IAM::User
+    Properties:
+      Groups:
+        - !Ref IamGroup
+      UserName: 'developer'
+      LoginProfile:
+        Password: !Ref InitialPassword
+        PasswordResetRequired: true
+
+  IamUserDeveloperAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      Serial: 1
+      Status: 'Active'
+      UserName: !Ref IamUserDeveloper
+  # ----------------------------------------------------
+
+  IamAssumeRoleAdministrator:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: '@Administrator'
+      MaxSessionDuration: 43200
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              AWS:
+                # @Administrator Member's ARN
+                - !GetAtt IamUserAdministrator.Arn
+            Action: 'sts:AssumeRole'
+            Condition:
+              Bool:
+                aws:MultiFactorAuthPresent: true
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AdministratorAccess'
+
+  IamAssumeRoleDeveloper:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: '@Developer'
+      MaxSessionDuration: 43200
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              AWS:
+                # @Developer Member's ARN
+                - !GetAtt IamUserDeveloper.Arn
+            Action: 'sts:AssumeRole'
+            Condition:
+              Bool:
+                aws:MultiFactorAuthPresent: true
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/IAMReadOnlyAccess'
+        - 'arn:aws:iam::aws:policy/PowerUserAccess'
+
+Outputs:
+  # Outputs ----------------------------------------------------------
+  ## administrator
+  IamAccessKeyAdministrator:
+    Value: !Ref IamUserAdministratorAccessKey
+    Export:
+      Name: !Sub '${AWS::StackName}-IamAccessKeyAdministrator'
+
+  IamAccessSecretAdministrator:
+    Value: !GetAtt IamUserAdministratorAccessKey.SecretAccessKey
+    Export:
+      Name: !Sub '${AWS::StackName}-IamAccessSecretAdministrator'
+
+  ## developer
+  IamAccessKeyDeveloper:
+    Value: !Ref IamUserDeveloperAccessKey
+    Export:
+      Name: !Sub '${AWS::StackName}-IamAccessKeyDeveloper'
+
+  IamAccessSecretDeveloper:
+    Value: !GetAtt IamUserDeveloperAccessKey.SecretAccessKey
+    Export:
+      Name: !Sub '${AWS::StackName}-IamAccessSecretDeveloper'
+  # ------------------------------------------------------------------

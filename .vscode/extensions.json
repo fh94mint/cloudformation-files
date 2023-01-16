@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    "amazonwebservices.aws-toolkit-vscode",
+    "aws-scripting-guy.cform",
+    "shardulm94.trailing-spaces",
+    "streetsidesoftware.code-spell-checker",
+    "kddejong.vscode-cfn-lint",
+    "redhat.vscode-yaml"
+  ]
+}
